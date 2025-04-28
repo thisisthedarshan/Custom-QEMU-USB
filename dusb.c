@@ -118,22 +118,6 @@ static const USBDescDevice desc_device_full = {
     .bcdUSB             = 0x0110, // USB 1.1
     .bMaxPacketSize0    = 64,
     .bNumConfigurations = 1,
-    .dev = {
-        .bLength            = 18,
-        .bDescriptorType    = USB_DT_DEVICE,
-        .bcdUSB             = 0x0110,
-        .bDeviceClass       = 0x00,
-        .bDeviceSubClass    = 0x00,
-        .bDeviceProtocol    = 0x00,
-        .bMaxPacketSize0    = 64,
-        .idVendor           = 0x0069,
-        .idProduct          = 0x0420,
-        .bcdDevice          = 0x0089,
-        .iManufacturer      = 1,
-        .iProduct           = 2,
-        .iSerialNumber      = 3,
-        .bNumConfigurations = 1,
-    },
     .confs = (USBDescConfig[]) {
         {
             .bNumInterfaces      = 3,
