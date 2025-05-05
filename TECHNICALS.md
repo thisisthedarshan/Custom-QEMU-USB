@@ -1,264 +1,109 @@
-# Technical Info
+Technical Information for DUSB Custom USB Device
+1. Device Overview
 
-## 1. Device Overview
+Vendor ID: 0x0069
+Product ID: 0x0420
+USB Version: 3.00 (SuperSpeed)
+Manufacturer String: "Darshan"
+Product String: "DUSB Device"
+Serial Number: "69-420"
+Device Version: 0.89 (bcdDevice = 0x0089)
 
-- **Vendor ID**: `0x0069`  
-- **Product ID**: `0x0420`  
-- **USB version**: 3.20  
-- **Manufacturer string**: Darshan  
-- **Product string**: “DUSB Device”  
-- **Serial string**: “69-420”  
+The "DUSB" device is a custom USB 3.2 SuperSpeed gadget implemented in QEMU. It exposes one interface with two alternate settings:
 
-This “DUSB” gadget exposes **three interfaces**, each with two alternate settings (0 = disabled, 1 = one endpoint):
+Alternate Setting 0: Three OUT endpoints
+EP1 OUT: Interrupt, 1024 bytes max packet size, 1ms polling interval
+EP2 OUT: Isochronous, 1024 bytes max packet size, 1ms interval, 1024 bytes per interval
+EP3 OUT: Bulk, 1024 bytes max packet size, 15-packet burst
 
-| Interface # | Transfer Type  | Alt-0 (disabled) | Alt-1 (active)     | Endpoint Address |
-|-------------|----------------|------------------|--------------------|------------------|
-| 0           | Interrupt      | none             |  IN EP 1           | `0x81`           |
-| 1           | Bulk           | OUT EP 3         | IN EP 3            | `0x03` / `0x83`  |
-| 2           | Isochronous    | none             |  IN EP 5           | `0x85`           |
 
-> **Note:** bEndpointAddress = direction OR endpoint number (e.g. `USB_DIR_IN|1 == 0x81`).
+Alternate Setting 1: Three IN endpoints
+EP1 IN: Interrupt, 1024 bytes max packet size, 1ms polling interval
+EP2 IN: Isochronous, 1024 bytes max packet size, 1ms interval, 1024 bytes per interval
+EP3 IN: Bulk, 1024 bytes max packet size, 15-packet burst
 
----
 
-## 2. USB Descriptors
 
-All descriptor tables live in static structures:
+The device supports remote wakeup and features configurable timers for periodic IN data updates and wakeup signaling.
 
-```c
-static const USBDescIface ifaces[] = {
-    { /* I0/Alt0: no endpoints (disabled) */ },
-    { /* I0/Alt1 – Interrupt IN EP1 */  .eps = &ep_desc_int },
-    { /* I1/Alt0 – Bulk-OUT EP3 */       .eps = &ep_desc_bulk_out },
-    { /* I1/Alt1 – Bulk-IN  EP3 */       .eps = &ep_desc_bulk_in },
-    { /* I2/Alt0: no endpoints (disabled) */ },
-    { /* I2/Alt1 – Iso-IN EP5 */         .eps = &ep_desc_iso },
-};
-```
+2. USB Descriptors
 
-- **Configuration descriptor**  
-  Tells the host there are 3 interfaces, each with two ALTs:
+BOS Descriptor: Defines USB 2.0 extension (LPM support) and SuperSpeed capabilities.
+Device Descriptor: Specifies USB 3.00, one configuration, and vendor/product details.
+Configuration Descriptor: One configuration with one interface, two alternate settings, and remote wakeup capability (100mA power draw).
+Interface Descriptor: Interface 0 with:
+Alternate Setting 0: Three OUT endpoints (vendor-specific class 0xFF).
+Alternate Setting 1: Three IN endpoints (vendor-specific class 0xFF).
 
-  ```c
-  static const USBDescConfig config = {
-      .bNumInterfaces      = 3,
-      .bConfigurationValue = 1,
-      .bmAttributes        = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
-      .bMaxPower           = 50,
-      .nif                 = ARRAY_SIZE(ifaces),
-      .ifs                 = ifaces,
-  };
-  ```
 
-- **Device descriptor**  
-  Points to that configuration:
+Endpoint Descriptors: Define transfer types, packet sizes, and intervals for each endpoint.
 
-  ```c
-  static const USBDescDevice device_desc = {
-      .bcdUSB             = 0x0200,
-      .bMaxPacketSize0    = 64,
-      .bNumConfigurations = 1,
-      .confs              = &config,
-  };
-  ```
 
-- **Top-level `USBDesc`**  
-  Bundles vendor/product IDs, string table, and the device descriptor:
+3. Device State
+The device state is managed by the DUSBState structure:
 
-  ```c
-  static const USBDesc desc = {
-      .id = { .idVendor=0x1234, .idProduct=0x5678, … },
-      .full = &device_desc,
-      .str  = (USBDescStrings){ "", "Acme", "DUSB Device", "0001" },
-  };
-  ```
+USBDevice dev: Base USB device object.
+uint8_t alt[1]: Tracks the current alternate setting (0 or 1) for interface 0.
+*QEMUTimer wakeup_timer: Timer for remote wakeup events.
+*QEMUTimer in_timer: Timer for periodic IN data updates.
+uint8_t in_data[3][1024]: Data buffers for the three IN endpoints.
+int in_data_len[3]: Length of data in each IN buffer.
+int current_in_ep: Counter for cycling through IN endpoints.
+uint32_t wakeup_interval: Configurable wakeup interval (default 10s).
+uint32_t in_interval: Configurable IN data update interval (default 25s).
 
----
 
-## 3. Device State (`DUSBState`)
+4. Control Requests
+The device handles standard USB control requests via usb_desc_handle_control and custom requests including:
 
-```c
-typedef struct DUSBState {
-    USBDevice dev;           // QOM base
-    USBEndpoint *ep_int;     // Interrupt IN
-    USBEndpoint *ep_bulk_in, *ep_bulk_out;
-    USBEndpoint *ep_iso;     // Isochronous IN
-    uint8_t alt[3];          // current alt-setting per interface
-    uint8_t data[64];        // sample data buffer
-} DUSBState;
-```
+GET_STATUS: Returns status for device (remote wakeup), interface, or endpoint (halted state).
+CLEAR_FEATURE: Disables remote wakeup or clears endpoint halt.
+SET_FEATURE: Enables remote wakeup or halts an endpoint.
+SET_INTERFACE: Switches between alternate settings (0 or 1) for interface 0; starts/stops IN data timer.
+SET_SEL: Configures U1/U2 exit latency for SuperSpeed power management.
+GET_DESCRIPTOR (BOS): Returns the BOS descriptor for USB 3.0 capabilities.
 
-- **`alt[i]`** tracks whether interface _i_ is at alt-0 or alt-1.  
-- **`data[]`** holds a simple byte pattern (0,1,2,…63).
+Invalid requests result in a stall.
 
----
+5. Data Transfers
 
-## 4. Initialization (`realize`)
+OUT Endpoints (Alternate Setting 0):
+Receives data from the host on EP1 (interrupt), EP2 (isochronous), or EP3 (bulk).
+Logs received data as a hex string.
 
-```c
-static void dusb_realize(USBDevice *dev, Error **errp)
-{
-    DUSBState *s = USB_DUSB(dev);
 
-    /* Tell QEMU’s USB core about our descriptors */
-    dev->usb_desc = &desc;
-    usb_desc_create_serial(dev);
-    usb_desc_init(dev);
+IN Endpoints (Alternate Setting 1):
+Sends data to the host from buffers updated by the in_timer.
+Data consists of 1024 bytes per endpoint, with the first byte as the endpoint number and the rest as a cycling pattern (0-255).
+Buffers are cleared after sending; NAK is returned if no data is available.
 
-    /* Fill data[] with a known pattern */
-    dusb_init_data(s);
 
-    /* Retrieve endpoint handles by token & endpoint number */
-    s->ep_int      = usb_ep_get(dev, USB_TOKEN_IN,  1);
-    s->ep_bulk_out = usb_ep_get(dev, USB_TOKEN_OUT, 3);
-    s->ep_bulk_in  = usb_ep_get(dev, USB_TOKEN_IN,  3);
-    s->ep_iso      = usb_ep_get(dev, USB_TOKEN_IN,  5);
-}
-```
 
-1. **`usb_desc_init`** builds binary descriptor tables for the host.  
-2. **`usb_ep_get`** looks up the `USBEndpoint*` for a given direction/token and EP number.  
-3. We never install per-endpoint callbacks—**all data** (IN or OUT) goes through the generic `handle_data` hook.
+Data transfers are stalled if the endpoint is halted or not allowed based on the current alternate setting.
 
----
+6. Remote Wakeup
 
-## 5. Control Requests (`handle_control`)
+Enabled via SET_FEATURE and disabled via CLEAR_FEATURE.
+The wakeup_timer triggers a wakeup signal on EP1 IN every wakeup_interval seconds (default 10s) if enabled.
 
-```c
-static void dusb_handle_control(USBDevice *dev, USBPacket *p,
-                                int request, int value, int index,
-                                int length, uint8_t *data)
-{
-    /* 1. Ask QEMU core to handle standard requests (GET_DESCRIPTOR, SET_CONFIG…) */
-    if (usb_desc_handle_control(dev, p, request, value, index, length, data) >= 0) {
-        return;
-    }
 
-    /* 2. Custom class/vendor requests */
-    switch (request) {
-    case InterfaceRequest | USB_REQ_SET_INTERFACE: {
-        DUSBState *s = USB_DUSB(dev);
-        int iface = index;        // which interface (0–2)
-        int alt   = value;        // new alt setting (0 or 1)
-        if (iface < 3 && alt < 2) {
-            s->alt[iface] = alt;  // remember it
-        }
-        p->status = USB_RET_SUCCESS;
-        break;
-    }
-    default:
-        p->status = USB_RET_STALL;
-    }
-}
-```
+7. Periodic IN Data Updates
 
-- **`SET_INTERFACE`** is how the host “activates” an alternate setting.  
-- On alt-0, no endpoints for that interface are visible; on alt-1, exactly one is.
+The in_timer updates IN endpoint buffers every in_interval seconds (default 25s) when in alternate setting 1.
+Cycles through EP1, EP2, and EP3, filling each buffer with 1024 bytes of sample data.
 
----
 
-## 6. Reset (`handle_reset`)
+8. Reset Behavior
 
-```c
-static void dusb_handle_reset(USBDevice *dev)
-{
-    DUSBState *s = USB_DUSB(dev);
-    memset(s->alt, 0, sizeof(s->alt));
-    dusb_init_data(s);
-}
-```
+Resets device address, configuration, and remote wakeup state.
+Sets alternate setting to 0 (OUT mode), stops the IN data timer, and clears IN buffers.
 
-- Returns every interface to alt-0 (all endpoints disabled).  
-- Reinitializes the data pattern.
 
----
+9. Configuration Options
 
-## 7. Data Transfers (`handle_data`)
+`wakeup_interval`: Time between remote wakeup signals (default 10s).
+`in_interval`: Time between IN data updates (default 25s).
 
-```c
-static void dusb_handle_data(USBDevice *dev, USBPacket *p)
-{
-    DUSBState *s = USB_DUSB(dev);
-    int size = p->iov.size;             // requested packet length
-    usb_packet_copy(p, s->data, size);  // copy our data[] into the packet
-    usb_packet_complete(dev, p);        // inform the USB core
-}
-```
+Both are configurable via QEMU properties.
 
-- **One handler** for all IN- and OUT-token packets on any endpoint.  
-- Always sends the same `data[]` pattern, regardless of direction.
-
-> In a full implementation you might branch on `p->pid` (IN vs OUT) and on `p->ep->nr` to route data differently; here we keep it simple.
-
----
-
-## 8. Endpoint‐Specific Behavior
-
-### 8.1 Interrupt Transfers (Interface 0)
-
-- **Polling interval** is `bInterval = 1` (1 ms) .  
-- After the host sets `SET_INTERFACE(0,1)`, it begins issuing IN tokens to EP 1 every 1 ms.  
-- On each IN token, **`handle_data`** copies 64 bytes from `data[]` into the USB packet and completes it.  
-- The host driver reads these 64 bytes as an “interrupt” payload.  
-
-_Use case:_ small, guaranteed-latency transfers (e.g. HID reports). Here we repurpose it for a continuous 64‐byte stream.
-
-### 8.2 Isochronous Transfers (Interface 2)
-
-- **Isochronous interval** is also `bInterval = 1` (every frame, 1 ms) .  
-- Isochronous transfers carry timing‐sensitive data (e.g. audio).  
-- After `SET_INTERFACE(2,1)`, the host schedules an IN transfer every millisecond.  
-- Each transfer invokes **the same** `handle_data` callback, returning 64 bytes of our pattern.  
-
-_Isochronous note:_ There is no error‐recovery or retry on data loss.
-
-### 8.3 Bulk Transfers (Interface 1)
-
-- **Bulk‐OUT** (`SET_INTERFACE(1,0)`) enables EP 3 OUT.  
-- **Bulk‐IN**  (`SET_INTERFACE(1,1)`) enables EP 3 IN.  
-- Bulk endpoints have **no guaranteed timing**—the host may issue tokens whenever bandwidth is available .  
-- Our single `handle_data` callback responds on both directions:  
-  - On **OUT** (device ← host), it still sends `data[]` back (in a real device you’d read the host’s buffer).  
-  - On **IN** (device → host), it returns `data[]` exactly like the other endpoints.  
-
-_Bulk use case:_ large, throughput‐optimized transfers (e.g. storage).
-
----
-
-## 9. Alternate Interfaces
-
-| Interface | Alt | Endpoints active        | Host action                        |
-|-----------|-----|-------------------------|------------------------------------|
-| 0 (INT)   |  0  | none                    | no interrupt polling possible      |
-|           |  1  | IN EP 1 (0x81)          | host polls EP 1 at 1 ms intervals  |
-| 1 (BULK)  |  0  | OUT EP 3 (0x03)         | host sends bulk writes             |
-|           |  1  | IN EP 3 (0x83)          | host issues bulk reads             |
-| 2 (ISOC)  |  0  | none                    | no isochronous streaming           |
-|           |  1  | IN EP 5 (0x85)          | host polls every frame (1 ms)      |
-
-- **How to switch**:  
-  ```  
-  bRequest = SET_INTERFACE  
-  wIndex   = interface_number  
-  wValue   = alternate_setting  
-  ```  
-- After you call **`handle_control`**, the USB core will only schedule transfers on the endpoints of the newly active alternate setting.
-
----
-
-## 10. Typical Host Interaction Sequence
-
-1. **Enumeration**  
-   - Host reads device, config, interface, and endpoint descriptors via standard control requests.  
-2. **SET_CONFIGURATION(1)**  
-   - Activates the single configuration (with all interfaces present).  
-3. **Select interrupt interface**  
-   - `SET_INTERFACE(iface=0, alt=1)` → EP 1 becomes active.  
-   - Host polls EP 1 every 1 ms; each IN → 64 bytes of `data[]`.  
-4. **Select isoch interface**  
-   - `SET_INTERFACE(iface=2, alt=1)` → EP 5 active.  
-   - Host starts 1 kHz isochronous streaming; each IN → 64 bytes.  
-5. **Select bulk interface**  
-   - `SET_INTERFACE(iface=1, alt=0)` → EP 3 OUT active. Host can send data.  
-   - `SET_INTERFACE(iface=1, alt=1)` → EP 3 IN active. Host can read data.  
-   - Any bulk IN/OUT token triggers `handle_data`, which in this sample just returns the same static pattern.
+This documentation reflects the current implementation of the DUSB device in dusb.c.
