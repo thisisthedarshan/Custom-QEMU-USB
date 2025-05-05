@@ -71,3 +71,11 @@ The custom USB devices comes with 2 options that can be set when adding device
 
 1. `wakeup_interval` - The time in seconds when the System Wakeup is triggered - this is periodic. Default is **10** seconds. Works only when USB::REMOTE_WAKEUP is setup.
 2. `in_interval` - The time interval between which the device sends IN transactions to the device - periodic. Default is **25** seconds. Works only when the ALT Interface is selected.
+
+## Descriptors
+
+The current USB device has the following descriptors
+
+![descriptors](./descriptors.png)
+
+[Obtained from [usb-getdescriptor-visualizer](https://github.com/thisisthedarshan/usb-getdescriptor-visualizer) project's [dumpDescriptor.c file](https://github.com/thisisthedarshan/usb-getdescriptor-visualizer/blob/main/dumpDescriptor.c)]
