@@ -1,6 +1,6 @@
 # Technical Document for DUSB: Custom USB Device in QEMU
 
-This document provides an in-depth breakdown of the "DUSB" custom USB device implemented for QEMU, as found in the source file `dusb.c`. Designed as a USB 3.2 SuperSpeed device with backward compatibility for USB 2.0 and 1.1, DUSB serves as a versatile example for advanced users interested in USB device emulation within QEMU. Below, I’ll dissect the implementation, focusing on support for multiple USB speeds, key function roles, timers, properties, and descriptor configurations.
+This document provides an in-depth breakdown of the "DUSB" custom USB device implemented for QEMU, as found in the source file [`dusb.c`](dusb.c). Designed as a USB 3.2 SuperSpeed device with backward compatibility for USB 2.0 and 1.1, DUSB serves as a versatile example for advanced users interested in USB device emulation within QEMU. Below, I’ll dissect the implementation, focusing on support for multiple USB speeds, key function roles, timers, properties, and descriptor configurations.
 
 ## Overview
 
