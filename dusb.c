@@ -7,7 +7,7 @@
 /**
  * DUSB: Custom USB 3.2 SuperSpeed Device
  * Implements a custom USB device with specific endpoint and interface
- * requirements
+ * requirements for USB 3.0 SuperSpeed, with backward compatibility to USB 2.0 and 1.1.
  */
 #include "qemu/osdep.h"
 #include "hw/usb.h"
@@ -46,106 +46,273 @@ static const uint8_t bos_descriptor[] = {
     0x00, 0x0E, 0x00, 0x01, 0x0A, 0xFF, 0x07                /* Attributes for SuperSpeed operation */
 };
 
-/* Endpoint descriptors for OUT direction (alternate setting 0) */
-static USBDescEndpoint ep_desc_out[] = {
-    {.bEndpointAddress = USB_DIR_OUT | 1, .bmAttributes = USB_ENDPOINT_XFER_INT, .wMaxPacketSize = 1024, .bInterval = 1, .bMaxBurst = 0},                             /* EP1 OUT: Interrupt, 1ms polling */
-    {.bEndpointAddress = USB_DIR_OUT | 2, .bmAttributes = USB_ENDPOINT_XFER_ISOC, .wMaxPacketSize = 1024, .bInterval = 1, .bMaxBurst = 0, .wBytesPerInterval = 1024}, /* EP2 OUT: Isochronous, 1024 bytes per 1ms */
-    {.bEndpointAddress = USB_DIR_OUT | 3, .bmAttributes = USB_ENDPOINT_XFER_BULK, .wMaxPacketSize = 1024, .bInterval = 0, .bMaxBurst = 15},                           /* EP3 OUT: Bulk, 15-packet burst */
+static const char manufacturer[] = {0x44, 0x61, 0x72, 0x73, 0x68, 0x61, 0x6e, 0x00};
+
+/* Endpoint descriptors for full-speed OUT and IN */
+static USBDescEndpoint ep_desc_out_full[] = {
+    {.bEndpointAddress = USB_DIR_OUT | 1, .bmAttributes = USB_ENDPOINT_XFER_INT, .wMaxPacketSize = 64, .bInterval = 1},
+    {.bEndpointAddress = USB_DIR_OUT | 2, .bmAttributes = USB_ENDPOINT_XFER_ISOC, .wMaxPacketSize = 1023, .bInterval = 1},
+    {.bEndpointAddress = USB_DIR_OUT | 3, .bmAttributes = USB_ENDPOINT_XFER_BULK, .wMaxPacketSize = 64, .bInterval = 0},
 };
 
-/* Endpoint descriptors for IN direction (alternate setting 1) */
-static USBDescEndpoint ep_desc_in[] = {
-    {.bEndpointAddress = USB_DIR_IN | 1, .bmAttributes = USB_ENDPOINT_XFER_INT, .wMaxPacketSize = 1024, .bInterval = 1, .bMaxBurst = 0},                             /* EP1 IN: Interrupt, 1ms polling */
-    {.bEndpointAddress = USB_DIR_IN | 2, .bmAttributes = USB_ENDPOINT_XFER_ISOC, .wMaxPacketSize = 1024, .bInterval = 1, .bMaxBurst = 0, .wBytesPerInterval = 1024}, /* EP2 IN: Isochronous, 1024 bytes per 1ms */
-    {.bEndpointAddress = USB_DIR_IN | 3, .bmAttributes = USB_ENDPOINT_XFER_BULK, .wMaxPacketSize = 1024, .bInterval = 0, .bMaxBurst = 15},                           /* EP3 IN: Bulk, 15-packet burst */
+static USBDescEndpoint ep_desc_in_full[] = {
+    {.bEndpointAddress = USB_DIR_IN | 1, .bmAttributes = USB_ENDPOINT_XFER_INT, .wMaxPacketSize = 64, .bInterval = 1},
+    {.bEndpointAddress = USB_DIR_IN | 2, .bmAttributes = USB_ENDPOINT_XFER_ISOC, .wMaxPacketSize = 1023, .bInterval = 1},
+    {.bEndpointAddress = USB_DIR_IN | 3, .bmAttributes = USB_ENDPOINT_XFER_BULK, .wMaxPacketSize = 64, .bInterval = 0},
 };
 
-/* Interface definitions for SuperSpeed */
+/* Endpoint descriptors for high-speed OUT and IN */
+static USBDescEndpoint ep_desc_out_hs[] = {
+    {.bEndpointAddress = USB_DIR_OUT | 1, .bmAttributes = USB_ENDPOINT_XFER_INT, .wMaxPacketSize = 1024, .bInterval = 1},
+    {.bEndpointAddress = USB_DIR_OUT | 2, .bmAttributes = USB_ENDPOINT_XFER_ISOC, .wMaxPacketSize = 1024 | (2 << 11), .bInterval = 1},
+    {.bEndpointAddress = USB_DIR_OUT | 3, .bmAttributes = USB_ENDPOINT_XFER_BULK, .wMaxPacketSize = 512, .bInterval = 0},
+};
+
+static USBDescEndpoint ep_desc_in_hs[] = {
+    {.bEndpointAddress = USB_DIR_IN | 1, .bmAttributes = USB_ENDPOINT_XFER_INT, .wMaxPacketSize = 1024, .bInterval = 1},
+    {.bEndpointAddress = USB_DIR_IN | 2, .bmAttributes = USB_ENDPOINT_XFER_ISOC, .wMaxPacketSize = 1024 | (2 << 11), .bInterval = 1},
+    {.bEndpointAddress = USB_DIR_IN | 3, .bmAttributes = USB_ENDPOINT_XFER_BULK, .wMaxPacketSize = 512, .bInterval = 0},
+};
+
+/* Endpoint descriptors for SuperSpeed OUT and IN */
+/* Endpoint descriptors for SuperSpeed OUT */
+static USBDescEndpoint ep_desc_out_ss[] = {
+    {
+        .bEndpointAddress = USB_DIR_OUT | 1,
+        .bmAttributes = USB_ENDPOINT_XFER_INT,
+        .wMaxPacketSize = 1024,
+        .bInterval = 1,
+        .bMaxBurst = 0,                 /* No burst for interrupt */
+        .bmAttributes_super = 0,        /* No special attributes */
+        .wBytesPerInterval = 0          /* Not used for interrupt */
+    },
+    {
+        .bEndpointAddress = USB_DIR_OUT | 2,
+        .bmAttributes = USB_ENDPOINT_XFER_ISOC,
+        .wMaxPacketSize = 1024,
+        .bInterval = 1,
+        .bMaxBurst = 3,                  /* Allow up to 3 packets per burst */
+        .bmAttributes_super = 3 | 0x80,  /* Mult = 3 for isochronous, SSP Support */
+        .wBytesPerInterval = 4096        /* Reserve 4096 bytes per interval */
+    },
+    {
+        .bEndpointAddress = USB_DIR_OUT | 3,
+        .bmAttributes = USB_ENDPOINT_XFER_BULK,
+        .wMaxPacketSize = 1024,
+        .bInterval = 0,
+        .bMaxBurst = 15,                 /* Allow up to 15 packets per burst */
+        .bmAttributes_super = 4,         /* MaxStreams = 4 (2^4 = 16 streams) */
+        .wBytesPerInterval = 0           /* Not used for bulk */
+    },
+};
+
+/* Endpoint descriptors for SuperSpeed IN */
+static USBDescEndpoint ep_desc_in_ss[] = {
+    {
+        .bEndpointAddress = USB_DIR_IN | 1,
+        .bmAttributes = USB_ENDPOINT_XFER_INT,
+        .wMaxPacketSize = 1024,
+        .bInterval = 1,
+        .bMaxBurst = 0,               /* No burst for interrupt */
+        .bmAttributes_super = 0,      /* No special attributes */
+        .wBytesPerInterval = 0        /* Not used for interrupt */
+    },
+    {
+        .bEndpointAddress = USB_DIR_IN | 2,
+        .bmAttributes = USB_ENDPOINT_XFER_ISOC,
+        .wMaxPacketSize = 1024,
+        .bInterval = 1,
+        .bMaxBurst = 3,               /* Allow up to 3 packets per burst */
+        .bmAttributes_super = 3,      /* Mult = 3 for isochronous */
+        .wBytesPerInterval = 4096     /* Reserve 4096 bytes per interval */
+    },
+    {
+        .bEndpointAddress = USB_DIR_IN | 3,
+        .bmAttributes = USB_ENDPOINT_XFER_BULK,
+        .wMaxPacketSize = 1024,
+        .bInterval = 0,
+        .bMaxBurst = 15,              /* Allow up to 15 packets per burst */
+        .bmAttributes_super = 4,      /* MaxStreams = 4 (2^4 = 16 streams) */
+        .wBytesPerInterval = 0        /* Not used for bulk */
+    },
+};
+
+/* Interface definitions for each speed */
+static const USBDescIface ifaces_full[] = {
+    {.bInterfaceNumber = 0, .bAlternateSetting = 0, .bNumEndpoints = 3, .bInterfaceClass = 0xFF, .eps = ep_desc_out_full},
+    {.bInterfaceNumber = 0, .bAlternateSetting = 1, .bNumEndpoints = 3, .bInterfaceClass = 0xFF, .eps = ep_desc_in_full},
+};
+
+static const USBDescIface ifaces_high[] = {
+    {.bInterfaceNumber = 0, .bAlternateSetting = 0, .bNumEndpoints = 3, .bInterfaceClass = 0xFF, .eps = ep_desc_out_hs},
+    {.bInterfaceNumber = 0, .bAlternateSetting = 1, .bNumEndpoints = 3, .bInterfaceClass = 0xFF, .eps = ep_desc_in_hs},
+};
+
 static const USBDescIface ifaces_super[] = {
-    {.bInterfaceNumber = 0, .bAlternateSetting = 0, .bNumEndpoints = 3, .bInterfaceClass = 0xFF, .eps = ep_desc_out}, /* Alt 0: OUT endpoints */
-    {.bInterfaceNumber = 0, .bAlternateSetting = 1, .bNumEndpoints = 3, .bInterfaceClass = 0xFF, .eps = ep_desc_in},  /* Alt 1: IN endpoints */
+    {.bInterfaceNumber = 0, .bAlternateSetting = 0, .bNumEndpoints = 3, .bInterfaceClass = 0xFF, .eps = ep_desc_out_ss},
+    {.bInterfaceNumber = 0, .bAlternateSetting = 1, .bNumEndpoints = 3, .bInterfaceClass = 0xFF, .eps = ep_desc_in_ss},
 };
 
-/* Device descriptor for SuperSpeed */
-static const USBDescDevice desc_device_super = {
-    .bcdUSB = 0x0300,        /* USB 3.0 */
-    .bMaxPacketSize0 = 9,    /* Control endpoint max packet size (2^9 = 512 bytes) */
-    .bNumConfigurations = 1, /* One configuration */
+/* Device descriptors for each speed */
+static const USBDescDevice desc_device_full = {
+    .bcdUSB = 0x0110,        /* USB 1.1 */
+    .bMaxPacketSize0 = 64,
+    .bNumConfigurations = 1,
     .confs = (USBDescConfig[]){
         {
-            .bNumInterfaces = 1,                                  /* One interface */
-            .bConfigurationValue = 1,                             /* Configuration value */
-            .iConfiguration = 0,                                  /* No string descriptor */
-            .bmAttributes = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP, /* Required config, remote wakeup supported */
-            .bMaxPower = 50,                                      /* 100mA (2mA units) */
-            .nif = 2,                                             /* Two alternate settings */
-            .ifs = ifaces_super                                   /* Pointer to interfaces */
-        }},
+            .bNumInterfaces = 1,
+            .bConfigurationValue = 1,
+            .iConfiguration = 0,
+            .bmAttributes = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
+            .bMaxPower = 50,
+            .nif = 2,
+            .ifs = ifaces_full
+        }
+    },
 };
 
+static const USBDescDevice desc_device_high = {
+    .bcdUSB = 0x0200,        /* USB 2.0 */
+    .bMaxPacketSize0 = 64,
+    .bNumConfigurations = 1,
+    .confs = (USBDescConfig[]){
+        {
+            .bNumInterfaces = 1,
+            .bConfigurationValue = 1,
+            .iConfiguration = 0,
+            .bmAttributes = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
+            .bMaxPower = 50,
+            .nif = 2,
+            .ifs = ifaces_high
+        }
+    },
+};
+
+static const USBDescDevice desc_device_super = {
+    .bcdUSB = 0x0300,        /* USB 3.0 */
+    .bMaxPacketSize0 = 9,    /* 2^9 = 512 bytes */
+    .bNumConfigurations = 1,
+    .confs = (USBDescConfig[]){
+        {
+            .bNumInterfaces = 1,
+            .bConfigurationValue = 1,
+            .iConfiguration = 0,
+            .bmAttributes = USB_CFG_ATT_ONE | USB_CFG_ATT_WAKEUP,
+            .bMaxPower = 50,
+            .nif = 2,
+            .ifs = ifaces_super
+        }
+    },
+};
+
+const char prod_desc[] = {   0x44,0x61,0x72,0x73,
+    0x68,0x61,0x6e,0x27,0x73,0x20,
+    0x43,0x75,0x73,0x74,0x6f,0x6d,
+    0x20,0x55,0x53,0x42,0x20,0x44,
+    0x65,0x76,0x69,0x63,0x65,0x00
+};
+
+static const char serial[] = "69-420";
 /* USB descriptor structure */
 static const USBDesc desc = {
-    .id = {.idVendor = 0x0069, .idProduct = 0x0420, .bcdDevice = 0x0089, .iManufacturer = 1, .iProduct = 2, .iSerialNumber = 3}, /* Device IDs and string indices */
-    .full = &desc_device_super,                                                                                                  /* Full-speed descriptor (unused, but set for compatibility) */
-    .high = &desc_device_super,                                                                                                  /* High-speed descriptor (unused) */
-    .super = &desc_device_super,                                                                                                 /* SuperSpeed descriptor */
-    .str = (const char *[]){"", "Darshan", "DUSB Device", "69-420"},                                                             /* String table */
+    .id = {.idVendor = 0x0069, .idProduct = 0x0420, .bcdDevice = 0x0089, .iManufacturer = 1, .iProduct = 2, .iSerialNumber = 3},
+    .full = &desc_device_full,
+    .high = &desc_device_high,
+    .super = &desc_device_super,
+    .str = (const char *[]){"", manufacturer, prod_desc, serial},
 };
 
 /* Handle BOS descriptor requests */
 static int dusb_handle_bos_descriptor(USBDevice *dev, int value, uint8_t *data, int len) {
-    if ((value >> 8) == USB_DT_BOS) {                    /* Check if BOS descriptor is requested */
-        int copy_len = MIN(len, sizeof(bos_descriptor)); /* Limit to buffer or descriptor size */
-        memcpy(data, bos_descriptor, copy_len);          /* Copy BOS descriptor */
+    if ((value >> 8) == USB_DT_BOS) {
+        int copy_len = MIN(len, sizeof(bos_descriptor));
+        memcpy(data, bos_descriptor, copy_len);
         qemu_log("DUSB: GET_DESCRIPTOR BOS, returning %d bytes\n", copy_len);
-        return copy_len; /* Return number of bytes copied */
+        return copy_len;
     }
-    return -1; /* Not handled */
+    return -1;
 }
 
 /* Callback for remote wakeup timer */
 static void dusb_wakeup_timer(void *opaque) {
     DUSBState *s = opaque;
     USBDevice *dev = &s->dev;
-    if (dev->remote_wakeup && dev->port) {                  /* Check if remote wakeup is enabled and port is attached */
-        USBEndpoint *ep = usb_ep_get(dev, USB_TOKEN_IN, 1); /* Get EP1 IN for wakeup signal */
+    if (dev->remote_wakeup && dev->port) {
+        USBEndpoint *ep = usb_ep_get(dev, USB_TOKEN_IN, 1);
         if (ep) {
-            usb_wakeup(ep, 0); /* Trigger remote wakeup */
+            usb_wakeup(ep, 0);
             qemu_log("DUSB: Remote wakeup triggered on EP1 IN\n");
         }
     }
-    timer_mod(s->wakeup_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + s->wakeup_interval * 1000); /* Reschedule timer */
+    timer_mod(s->wakeup_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + s->wakeup_interval * 1000);
 }
 
 /* Callback for periodic IN data updates */
 static void dusb_in_timer(void *opaque) {
     DUSBState *s = opaque;
-    if (s->alt[0] == 1) {                    /* Only update if in alternate setting 1 (IN mode) */
-        int ep = (s->current_in_ep % 3) + 1; /* Cycle through endpoints 1-3 */
-        s->in_data[ep - 1][0] = ep;          /* Set first byte to endpoint number */
-        for (int i = 1; i < 1024; i++) {     /* Fill buffer with sample data */
-            s->in_data[ep - 1][i] = i % 256;
+    if (s->alt[0] == 1) {
+        int ep = (s->current_in_ep % 3) + 1;
+        int data_len;
+
+        switch (ep) {
+            case 1: /* Interrupt (EP1 IN) - Small, periodic data */
+                data_len = 64; /* Smaller packet typical for interrupt */
+                s->in_data[ep - 1][0] = ep;
+                for (int i = 1; i < data_len; i++) {
+                    s->in_data[ep - 1][i] = (i + s->current_in_ep) % 256; /* Simple pattern */
+                }
+                break;
+            case 2: /* Isochronous (EP2 IN) - Continuous stream-like data */
+                data_len = 1024; /* Full packet for streaming */
+                s->in_data[ep - 1][0] = ep;
+                for (int i = 1; i < data_len; i++) {
+                    s->in_data[ep - 1][i] = (i * s->current_in_ep) % 256; /* Simulated stream */
+                }
+                break;
+            case 3: /* Bulk (EP3 IN) - Large, non-time-sensitive data */
+                data_len = 1024; /* Full packet for bulk transfer */
+                s->in_data[ep - 1][0] = ep;
+                for (int i = 1; i < data_len; i++) {
+                    s->in_data[ep - 1][i] = i % 256; /* Sequential data */
+                }
+                break;
+            default:
+                data_len = 0; /* Should not happen */
+                break;
         }
-        s->in_data_len[ep - 1] = 1024; /* Mark buffer as full */
-        qemu_log("DUSB: Updated data for EP%d IN\n", ep);
-        s->current_in_ep++; /* Move to next endpoint */
+
+        s->in_data_len[ep - 1] = data_len;
+        qemu_log("DUSB: Updated data for EP%d IN (%s), length=%d\n", 
+                 ep, ep == 1 ? "Interrupt" : (ep == 2 ? "Isochronous" : "Bulk"), data_len);
+        s->current_in_ep++;
     }
-    timer_mod(s->in_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + s->in_interval * 1000); /* Reschedule timer */
+    timer_mod(s->in_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + s->in_interval * 1000);
 }
 
 /* Handle control requests from the host */
 static void dusb_handle_control(USBDevice *dev, USBPacket *p, int request, int value, int index, int length, uint8_t *data) {
     DUSBState *s = USB_DUSB(dev);
-    int bmRequestType = request & 0xff;             /* Request type and recipient */
-    int bRequest = (request >> 8) & 0xff;           /* Request code */
-    int recipient = bmRequestType & USB_RECIP_MASK; /* Device, interface, or endpoint */
-    int direction = bmRequestType & USB_DIR_IN;     /* IN or OUT */
+    int bmRequestType = request & 0xff;
+    int bRequest = (request >> 8) & 0xff;
+    int recipient = bmRequestType & USB_RECIP_MASK;
+    int direction = bmRequestType & USB_DIR_IN;
 
-    /* Log request details for debugging */
     qemu_log("DUSB: Control request - bRequest: %d, bmRequestType: 0x%02x, recipient: %d, direction: %s, value: %d, index: %d, length: %d\n",
              bRequest, bmRequestType, recipient, direction ? "IN" : "OUT", value, index, length);
 
-    /* Handle BOS descriptor request */
+    /* Logging negotiated speed during descriptor requests */
+    if (bRequest == USB_REQ_GET_DESCRIPTOR) {
+        int desc_type = value >> 8;
+        const char *speed_str;
+        switch (dev->speed) {
+            case USB_SPEED_FULL: speed_str = "Full-Speed"; break;
+            case USB_SPEED_HIGH: speed_str = "High-Speed"; break;
+            case USB_SPEED_SUPER: speed_str = "SuperSpeed"; break;
+            default: speed_str = "Unknown"; break;
+        }
+        qemu_log("DUSB: GET_DESCRIPTOR type %d at %s\n", desc_type, speed_str);
+    }
+
     if (bRequest == USB_REQ_GET_DESCRIPTOR && (value >> 8) == USB_DT_BOS) {
         int ret = dusb_handle_bos_descriptor(dev, value, data, length);
         if (ret >= 0) {
@@ -160,26 +327,26 @@ static void dusb_handle_control(USBDevice *dev, USBPacket *p, int request, int v
         qemu_log("DUSB: Handled by usb_desc_handle_control, bytes: %d\n", ret);
         return;
     }
-
+    
     /* Handle custom control requests */
     switch (bRequest) {
         case USB_REQ_GET_STATUS:
-            if (recipient == USB_RECIP_DEVICE) {         /* Device status */
-                data[0] = (dev->remote_wakeup << 1) | 0; /* Bit 1 = remote wakeup */
+            if (recipient == USB_RECIP_DEVICE) {
+                data[0] = (dev->remote_wakeup << 1) | 0;
                 data[1] = 0;
                 p->actual_length = 2;
                 qemu_log("DUSB: GET_STATUS (Device) - Remote Wakeup: %d\n", dev->remote_wakeup);
-            } else if (recipient == USB_RECIP_INTERFACE) { /* Interface status */
+            } else if (recipient == USB_RECIP_INTERFACE) {
                 data[0] = 0;
                 data[1] = 0;
                 p->actual_length = 2;
                 qemu_log("DUSB: GET_STATUS (Interface)\n");
-            } else if (recipient == USB_RECIP_ENDPOINT) { /* Endpoint status */
+            } else if (recipient == USB_RECIP_ENDPOINT) {
                 int ep = index & 0x0f;
                 int dir = (index & 0x80) ? USB_TOKEN_IN : USB_TOKEN_OUT;
                 USBEndpoint *endpoint = usb_ep_get(dev, dir, ep);
                 if (endpoint) {
-                    data[0] = endpoint->halted ? 1 : 0; /* Bit 0 = halted */
+                    data[0] = endpoint->halted ? 1 : 0;
                     data[1] = 0;
                     p->actual_length = 2;
                     qemu_log("DUSB: GET_STATUS (Endpoint %d %s) - Halted: %d\n", ep, dir == USB_TOKEN_IN ? "IN" : "OUT", endpoint->halted);
@@ -192,11 +359,11 @@ static void dusb_handle_control(USBDevice *dev, USBPacket *p, int request, int v
             break;
 
         case USB_REQ_CLEAR_FEATURE:
-            if (recipient == USB_RECIP_DEVICE && value == USB_DEVICE_REMOTE_WAKEUP) { /* Disable remote wakeup */
+            if (recipient == USB_RECIP_DEVICE && value == USB_DEVICE_REMOTE_WAKEUP) {
                 dev->remote_wakeup = 0;
                 p->actual_length = 0;
                 qemu_log("DUSB: CLEAR_FEATURE (Device) - Remote Wakeup disabled\n");
-            } else if (recipient == USB_RECIP_ENDPOINT && value == 0) { /* Clear endpoint halt */
+            } else if (recipient == USB_RECIP_ENDPOINT && value == 0) {
                 int ep = index & 0x0f;
                 int dir = (index & 0x80) ? USB_TOKEN_IN : USB_TOKEN_OUT;
                 USBEndpoint *endpoint = usb_ep_get(dev, dir, ep);
@@ -213,11 +380,11 @@ static void dusb_handle_control(USBDevice *dev, USBPacket *p, int request, int v
             break;
 
         case USB_REQ_SET_FEATURE:
-            if (recipient == USB_RECIP_DEVICE && value == USB_DEVICE_REMOTE_WAKEUP) { /* Enable remote wakeup */
+            if (recipient == USB_RECIP_DEVICE && value == USB_DEVICE_REMOTE_WAKEUP) {
                 dev->remote_wakeup = 1;
                 p->actual_length = 0;
                 qemu_log("DUSB: SET_FEATURE (Device) - Remote Wakeup enabled\n");
-            } else if (recipient == USB_RECIP_ENDPOINT && value == 0) { /* Halt endpoint */
+            } else if (recipient == USB_RECIP_ENDPOINT && value == 0) {
                 int ep = index & 0x0f;
                 int dir = (index & 0x80) ? USB_TOKEN_IN : USB_TOKEN_OUT;
                 USBEndpoint *endpoint = usb_ep_get(dev, dir, ep);
@@ -234,14 +401,14 @@ static void dusb_handle_control(USBDevice *dev, USBPacket *p, int request, int v
             break;
 
         case USB_REQ_SET_INTERFACE:
-            if (recipient == USB_RECIP_INTERFACE && index == 0) { /* Switch alternate setting for interface 0 */
+            if (recipient == USB_RECIP_INTERFACE && index == 0) {
                 if (value < 2) {
-                    s->alt[0] = value; /* Set alt (0=OUT, 1=IN) */
+                    s->alt[0] = value;
                     p->actual_length = 0;
                     qemu_log("DUSB: SET_INTERFACE - Interface 0 set to alt %d\n", value);
-                    if (value == 1) { /* Start IN data timer for alt 1 */
+                    if (value == 1) {
                         timer_mod(s->in_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + s->in_interval * 1000);
-                    } else { /* Stop timer and clear buffers for alt 0 */
+                    } else {
                         timer_del(s->in_timer);
                         memset(s->in_data_len, 0, sizeof(s->in_data_len));
                     }
@@ -254,7 +421,7 @@ static void dusb_handle_control(USBDevice *dev, USBPacket *p, int request, int v
             break;
 
         case USB_REQ_SET_SEL:
-            if (recipient == USB_RECIP_DEVICE && direction == USB_DIR_OUT && length == 6) { /* Set U1/U2 exit latency */
+            if (recipient == USB_RECIP_DEVICE && direction == USB_DIR_OUT && length == 6) {
                 qemu_log("DUSB: SET_SEL - U1 SEL=%d, U1 PEL=%d, U2 SEL=%d, U2 PEL=%d\n",
                          data[0], data[1], data[2] | (data[3] << 8), data[4] | (data[5] << 8));
                 p->actual_length = 0;
@@ -269,7 +436,7 @@ static void dusb_handle_control(USBDevice *dev, USBPacket *p, int request, int v
     return;
 
 fail:
-    p->status = USB_RET_STALL; /* Stall invalid requests */
+    p->status = USB_RET_STALL;
     qemu_log("DUSB: Control request failed - Stalled\n");
 }
 
@@ -277,50 +444,55 @@ fail:
 static void dusb_handle_data(USBDevice *dev, USBPacket *p) {
     DUSBState *s = USB_DUSB(dev);
     USBEndpoint *ep = p->ep;
-    int ep_num = ep->nr;                /* Endpoint number */
-    bool in = (p->pid == USB_TOKEN_IN); /* Direction (IN or OUT) */
+    int ep_num = ep->nr;
+    bool in = (p->pid == USB_TOKEN_IN);
 
-    qemu_log("DUSB: handle_data EP#%d %s, len=%zu, stream=%d\n", ep_num, in ? "IN" : "OUT", p->iov.size, p->stream);
+    /* Log stream usage for bulk endpoints */
+    if (ep_num == 3) {
+        qemu_log("DUSB: handle_data EP#%d %s, stream=%d\n", ep_num, in ? "IN" : "OUT", p->stream);
+    } else {
+        qemu_log("DUSB: handle_data EP#%d %s\n", ep_num, in ? "IN" : "OUT");
+    }
 
-    if (ep->halted) { /* Stall if endpoint is halted */
+    if (ep->halted) {
         p->status = USB_RET_STALL;
         qemu_log("DUSB: EP#%d %s is halted - Stalled\n", ep_num, in ? "IN" : "OUT");
         return;
     }
 
-    bool ep_allowed = (in && s->alt[0] == 1) || (!in && s->alt[0] == 0); /* Check if endpoint matches current alt setting */
+    bool ep_allowed = (in && s->alt[0] == 1) || (!in && s->alt[0] == 0);
     if (ep_num >= 1 && ep_num <= 3 && !ep_allowed) {
         p->status = USB_RET_STALL;
         qemu_log("DUSB: EP#%d %s not available in alt %d - Stalled\n", ep_num, in ? "IN" : "OUT", s->alt[0]);
         return;
     }
 
-    if (!in) {                                     /* OUT transfer: receive data from host */
-        uint8_t *buf = g_malloc(p->iov.size);      /* Allocate buffer for received data */
-        usb_packet_copy(p, buf, p->iov.size);      /* Copy data from packet */
-        char *hex = g_malloc(3 * p->iov.size + 1); /* Buffer for hex string */
+    if (!in) {
+        uint8_t *buf = g_malloc(p->iov.size);
+        usb_packet_copy(p, buf, p->iov.size);
+        char *hex = g_malloc(3 * p->iov.size + 1);
         char *h = hex;
         for (size_t i = 0; i < p->iov.size; i++) {
-            int n = snprintf(h, 4, "%02x ", buf[i]); /* Convert to hex */
+            int n = snprintf(h, 4, "%02x ", buf[i]);
             h += n;
         }
         *h = '\0';
-        qemu_log("DUSB: Received on EP#%d OUT: %s\n", ep_num, hex); /* Log received data */
+        qemu_log("DUSB: Received on EP#%d OUT: %s\n", ep_num, hex);
         g_free(hex);
         g_free(buf);
         p->actual_length = p->iov.size;
         p->status = USB_RET_SUCCESS;
-    } else {                                                    /* IN transfer: send data to host */
-        int idx = ep_num - 1;                                   /* Buffer index (0-2) */
-        if (s->in_data_len[idx] > 0) {                          /* Check if data is available */
-            size_t len = MIN(p->iov.size, s->in_data_len[idx]); /* Limit to packet or buffer size */
-            usb_packet_copy(p, s->in_data[idx], len);           /* Copy data to packet */
+    } else {
+        int idx = ep_num - 1;
+        if (s->in_data_len[idx] > 0) {
+            size_t len = MIN(p->iov.size, s->in_data_len[idx]);
+            usb_packet_copy(p, s->in_data[idx], len);
             p->actual_length = len;
             p->status = USB_RET_SUCCESS;
-            s->in_data_len[idx] = 0; /* Clear buffer after sending */
+            s->in_data_len[idx] = 0;
             qemu_log("DUSB: Sent %zu bytes on EP#%d IN\n", len, ep_num);
         } else {
-            p->status = USB_RET_NAK; /* No data available */
+            p->status = USB_RET_NAK;
             qemu_log("DUSB: No data available on EP#%d IN - NAK\n", ep_num);
         }
     }
@@ -329,40 +501,40 @@ static void dusb_handle_data(USBDevice *dev, USBPacket *p) {
 /* Handle device reset */
 static void dusb_handle_reset(USBDevice *dev) {
     DUSBState *s = USB_DUSB(dev);
-    dev->addr = 0;                                     /* Clear device address */
-    dev->configuration = 0;                            /* Clear configuration */
-    dev->remote_wakeup = 0;                            /* Disable remote wakeup */
-    memset(s->alt, 0, sizeof(s->alt));                 /* Reset to alternate setting 0 */
-    timer_del(s->in_timer);                            /* Stop IN data timer */
-    memset(s->in_data_len, 0, sizeof(s->in_data_len)); /* Clear IN buffers */
+    dev->addr = 0;
+    dev->configuration = 0;
+    dev->remote_wakeup = 0;
+    memset(s->alt, 0, sizeof(s->alt));
+    timer_del(s->in_timer);
+    memset(s->in_data_len, 0, sizeof(s->in_data_len));
     qemu_log("DUSB: Device reset - addr: %d, config: %d\n", dev->addr, dev->configuration);
 }
 
-/* Initialize the device */
+/* Initializing the device and setting up endpoints */
 static void dusb_realize(USBDevice *dev, Error **errp) {
     DUSBState *s = USB_DUSB(dev);
-    dev->usb_desc = &desc;        /* Set USB descriptors */
-    dev->speed = USB_SPEED_SUPER; /* Set to SuperSpeed */
-    usb_desc_init(dev);           /* Initialize descriptor tables */
+    dev->usb_desc = &desc;
+    dev->speed = USB_SPEED_SUPER; /* Advertise SuperSpeed capability */
+    usb_desc_init(dev);
     qemu_log("DUSB: usb_desc_init completed, dev->usb_desc: %p\n", dev->usb_desc);
-    qemu_log("DUSB: wakeup_interval (seconds) = %u, in_interval (seconds) = %u", s->wakeup_interval, s->in_interval * 1000);
-    usb_ep_init(dev); /* Initialize endpoints */
+    qemu_log("DUSB: wakeup_interval (seconds) = %u, in_interval (seconds) = %u\n", s->wakeup_interval, s->in_interval);
+    usb_ep_init(dev);
 
-    /* Configure endpoint properties */
+    /* Configuring endpoint properties for SuperSpeed streams on bulk endpoints */
     for (int i = 1; i <= 3; i++) {
         USBEndpoint *ep_out = usb_ep_get(dev, USB_TOKEN_OUT, i);
         USBEndpoint *ep_in = usb_ep_get(dev, USB_TOKEN_IN, i);
         if (ep_out) {
-            ep_out->max_packet_size = 1024;          /* Set max packet size */
-            ep_out->max_streams = (i == 3) ? 16 : 0; /* Enable streams for bulk (EP3) */
+            ep_out->max_streams = (i == 3) ? 9 : 0; /* 9 streams for bulk EP3 OUT */
+            qemu_log("DUSB: (OUT) Max Stream for PID: %u, IFNUM: %u = %d\n", ep_out->pid, ep_out->ifnum, ep_out->max_streams);
         }
         if (ep_in) {
-            ep_in->max_packet_size = 1024;
-            ep_in->max_streams = (i == 3) ? 16 : 0;
+            ep_in->max_streams = (i == 3) ? 9 : 0; /* 9 streams for bulk EP3 IN */
+            qemu_log("DUSB: (IN) Max Stream for PID: %u, IFNUM: %u = %d\n", ep_in->pid, ep_in->ifnum, ep_in->max_streams);
         }
     }
 
-    /* Configure control endpoint (EP0) */
+    /* Setting up control endpoint (EP0) */
     USBEndpoint *ep0_out = usb_ep_get(dev, USB_TOKEN_OUT, 0);
     USBEndpoint *ep0_in = usb_ep_get(dev, USB_TOKEN_IN, 0);
     if (!ep0_out || !ep0_in) {
@@ -371,16 +543,16 @@ static void dusb_realize(USBDevice *dev, Error **errp) {
     }
     ep0_out->max_packet_size = 512;
     ep0_in->max_packet_size = 512;
-    ep0_out->pipeline = true; /* Enable pipelining */
+    ep0_out->pipeline = true;
     ep0_in->pipeline = true;
 
-    /* Initialize state */
+    /* Initializing device state */
     memset(s->alt, 0, sizeof(s->alt));
     memset(s->in_data, 0, sizeof(s->in_data));
     memset(s->in_data_len, 0, sizeof(s->in_data_len));
     s->current_in_ep = 0;
 
-    /* Set up timers */
+    /* Setting up timers for wakeup and IN data */
     s->wakeup_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, dusb_wakeup_timer, s);
     timer_mod(s->wakeup_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + s->wakeup_interval * 1000);
     s->in_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, dusb_in_timer, s);
@@ -388,25 +560,25 @@ static void dusb_realize(USBDevice *dev, Error **errp) {
 
 /* Device properties for configuration */
 static Property dusb_properties[] = {
-    DEFINE_PROP_UINT32("wakeup_interval", DUSBState, wakeup_interval, 10), /* Default 10s */
-    DEFINE_PROP_UINT32("in_interval", DUSBState, in_interval, 25),         /* Default 25s */
+    DEFINE_PROP_UINT32("wakeup_interval", DUSBState, wakeup_interval, 10),
+    DEFINE_PROP_UINT32("in_interval", DUSBState, in_interval, 25),
 };
 
-/* Initialize USB device class */
+/* Initializing USB device class */
 static void dusb_class_init(ObjectClass *klass, void *data) {
     DeviceClass *dc = DEVICE_CLASS(klass);
     USBDeviceClass *uc = USB_DEVICE_CLASS(klass);
 
-    uc->product_desc = "DUSB Custom Device";  /* Product description */
-    uc->usb_desc = &desc;                     /* USB descriptors */
-    uc->handle_control = dusb_handle_control; /* Control request handler */
-    uc->handle_data = dusb_handle_data;       /* Data transfer handler */
-    uc->realize = dusb_realize;               /* Initialization function */
-    uc->handle_attach = usb_desc_attach;      /* Attachment handler */
-    uc->handle_reset = dusb_handle_reset;     /* Reset handler */
+    uc->product_desc = prod_desc;
+    uc->usb_desc = &desc;
+    uc->handle_control = dusb_handle_control;
+    uc->handle_data = dusb_handle_data;
+    uc->realize = dusb_realize;
+    uc->handle_attach = usb_desc_attach;
+    uc->handle_reset = dusb_handle_reset;
 
-    device_class_set_props(dc, dusb_properties);   /* Set properties */
-    set_bit(DEVICE_CATEGORY_MISC, dc->categories); /* Categorize as miscellaneous */
+    device_class_set_props(dc, dusb_properties);
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
 }
 
 /* Type information for QEMU object model */
@@ -417,7 +589,7 @@ static const TypeInfo dusb_info = {
     .class_init = dusb_class_init,
 };
 
-/* Register the device with QEMU */
+/* Registering the device with QEMU */
 static void dusb_register_types(void) {
     type_register_static(&dusb_info);
 }
