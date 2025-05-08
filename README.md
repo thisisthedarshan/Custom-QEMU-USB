@@ -22,7 +22,7 @@ system_ss.add(when: 'CONFIG_USBD', if_true: files('dusb/dusb.c'))
 option('dusb', type: 'boolean', value: true, description: 'Custom DUSB device support')
 ```
 
-4. **Configure QEMU**: Edit the meson.build script in your root folder and add after:
+4. **Configure QEMU**: Edit the meson.build script in your root folder and after:
 
 ```meson
 #################
@@ -42,7 +42,7 @@ endif
 5. **Configure QEMU**: Run the configure script with the device enabled:
 
 ```bash
-./configure -Ddusb=true
+mkdir -p build && cd build && ../configure --enable-dusb
 ```
 
 6. **Build QEMU**: Compile QEMU:
@@ -54,13 +54,13 @@ make
 7. **Run QEMU with Device**: Start QEMU with the device attached:
 
 ```bash
-qemu-system-i386 -usb -device dusb
+qemu-system-i386 -device usb-dusb
 ```
 
 8. **Enable Logging (Optional)**: To see logs, run QEMU with logging enabled:
 
 ```bash
-qemu-system-i386 -usb -device dusb -D dlog.txt -d usb
+qemu-system-i386 -device usb-dusb -D dlog.txt -d usb
 ```
 
 Logs will show device transactions in `dlog.txt`.
@@ -78,4 +78,4 @@ The current USB device has the following descriptors
 
 ![descriptors](./descriptors.png)
 
-[Obtained from [usb-getdescriptor-visualizer](https://github.com/thisisthedarshan/usb-getdescriptor-visualizer) project's [dumpDescriptor.c file](https://github.com/thisisthedarshan/usb-getdescriptor-visualizer/blob/main/dumpDescriptor.c)]
+[Obtained from [usb-getdescriptor-visualizer](https://github.com/thisisthedarshan/usb-getdescriptor-visualizer) project's tools]
