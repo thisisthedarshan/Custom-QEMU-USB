@@ -78,4 +78,4 @@ The current USB device has the following descriptors
 
 ![descriptors](./descriptors.png)
 
-[Obtained from [usb-getdescriptor-visualizer](https://github.com/thisisthedarshan/usb-getdescriptor-visualizer) project's tools]
+[Obtained from [USB-GetDescriptor-Visualizer](https://github.com/thisisthedarshan/USB-GetDescriptor-Visualizer) project's tools]
